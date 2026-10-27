@@ -235,8 +235,7 @@ input, select, textarea {
 .hold-m { stroke: var(--mid); }
 .hold-e { stroke: var(--end); }
 .hold-f { stroke: var(--foot); stroke-dasharray: 8 5; }
-/* With real hold photos: keep the board readable but make the problem's rings pop. */
-.board-hold { filter: brightness(1.12) saturate(1.35); }
+/* With real hold photos the rings sit on top; a dark outline keeps them readable. */
 .with-photos .hold { stroke-width: 6; filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.9)); }
 
 .angle-row {
