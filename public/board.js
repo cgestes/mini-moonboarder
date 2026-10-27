@@ -11,8 +11,9 @@ const CELL = 50;
 const PAD = 30;
 const W = PAD + COLS.length * CELL + 8;
 const H = ROWS * CELL + PAD + 8;
-// Hold photos are 90px squares with the hold centred, drawn at the website's scale (50px cells).
-const PHOTO = 90;
+// Hold photos are 90px squares with the hold centred; drawn slightly larger than the website's
+// scale (50px cells) so small holds stay visible on a phone.
+const PHOTO = 100;
 
 function pos(p) {
   const col = COLS.indexOf(p[0]);
