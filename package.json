@@ -1,0 +1,22 @@
+{
+  "name": "moonboard-angles",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Track Mini MoonBoard 2020 ascents at custom angles (20-40°)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server/main.ts",
+    "dev": "node --watch server/main.ts",
+    "test": "node --test test/",
+    "moon:proxy": "mitmdump --mode wireguard -s tools/moon_capture.py --allow-hosts '(ems-x|moonclimbing)\\.com' --set block_global=false",
+    "moon:sync": "node server/moon-sync.ts",
+    "moon:qr": "tools/moon-wg-qr.sh"
+  },
+  "dependencies": {
+    "htm": "^3.1.1",
+    "preact": "^10.29.8"
+  }
+}
