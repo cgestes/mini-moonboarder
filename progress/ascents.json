@@ -1,4 +1,6 @@
 {
   "climbers": ["Ced"],
-  "attempts": []
+  "attempts": [
+    {"climber":"Ced","problem":482970,"name":"MIGHTY QUINN","grade":"8A","angle":20,"tries":10,"sent":"2026-10-27T22:42:53.221Z","updated":"2026-10-27T22:42:56.184Z"}
+  ]
 }
