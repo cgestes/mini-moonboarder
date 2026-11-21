@@ -7,9 +7,10 @@ Runs locally on your computer; use it from your phone on the same Wi-Fi.
 
 Requires Node 24+ (uses built-in TypeScript stripping and `node:sqlite`).
 
-Double-click `start.command` in Finder (or run `./start.command`). It installs dependencies on the
-first run, starts the server, keeps the Mac awake while it runs, and opens the app in the browser.
-If it's already running, it just opens the browser. Close the window or press Ctrl+C to stop it.
+Run `./start.sh`. It installs dependencies on the first run, starts the server, keeps the Mac awake
+while it runs, opens the app in the browser, and prints the phone address with a QR code to scan
+(if `qrencode` is installed). If it's already running, it just shows the address and opens the
+browser. Ctrl+C stops it.
 
 By hand:
 
