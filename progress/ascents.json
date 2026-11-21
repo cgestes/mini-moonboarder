@@ -1,6 +1,18 @@
 {
-  "climbers": ["Ced"],
+  "climbers": ["Ced","Nikki"],
   "attempts": [
-    {"climber":"Ced","problem":482970,"name":"MIGHTY QUINN","grade":"8A","angle":20,"tries":10,"sent":"2026-10-27T22:42:53.221Z","updated":"2026-10-27T22:42:56.184Z"}
+    {"climber":"Ced","problem":370134,"name":"MAGIC CHERRY","grade":"6B+","angle":20,"tries":2,"sent":"2026-11-09T19:21:40.359Z","updated":"2026-11-09T19:21:40.359Z"},
+    {"climber":"Ced","problem":371108,"name":"FLOUNCE WITH IT","grade":"6B","angle":20,"tries":1,"sent":"2026-11-09T18:53:02.607Z","updated":"2026-11-09T18:53:02.607Z"},
+    {"climber":"Ced","problem":371427,"name":"REAL GETS TO STEPPIN","grade":"6A+","angle":20,"tries":1,"sent":"2026-11-09T18:44:58.408Z","updated":"2026-11-09T18:44:58.408Z"},
+    {"climber":"Ced","problem":372531,"name":"BE LIKE MOON WATER","grade":"7A+","angle":20,"tries":2,"sent":"2026-11-09T19:07:46.432Z","updated":"2026-11-09T19:07:46.432Z"},
+    {"climber":"Ced","problem":374358,"name":"EXIT... STAGE LEFT","grade":"7A","angle":20,"tries":1,"sent":"2026-11-09T19:00:23.971Z","updated":"2026-11-09T19:00:23.971Z"},
+    {"climber":"Ced","problem":374947,"name":"APPROACH SHOES","grade":"6A+","angle":20,"tries":1,"sent":"2026-11-09T18:47:14.679Z","updated":"2026-11-09T18:47:14.679Z"},
+    {"climber":"Ced","problem":388296,"name":"TRAVERSITICITY","grade":"6C","angle":30,"tries":4,"sent":null,"updated":"2026-11-09T19:34:08.377Z"},
+    {"climber":"Ced","problem":401413,"name":"ᕦ( ͡° ͜ʖ ͡°)ᕤ","grade":"6C","angle":20,"tries":1,"sent":"2026-11-09T18:55:29.267Z","updated":"2026-11-09T18:55:29.267Z"},
+    {"climber":"Ced","problem":453713,"name":"RODY","grade":"6A+","angle":30,"tries":1,"sent":"2026-11-09T19:15:15.164Z","updated":"2026-11-09T19:15:15.164Z"},
+    {"climber":"Ced","problem":482970,"name":"MIGHTY QUINN","grade":"8A","angle":20,"tries":10,"sent":"2026-10-27T22:42:53.221Z","updated":"2026-10-27T22:42:56.184Z"},
+    {"climber":"Nikki","problem":371108,"name":"FLOUNCE WITH IT","grade":"6B","angle":20,"tries":2,"sent":"2026-11-09T19:00:57.954Z","updated":"2026-11-09T19:00:57.954Z"},
+    {"climber":"Nikki","problem":371427,"name":"REAL GETS TO STEPPIN","grade":"6A+","angle":20,"tries":1,"sent":"2026-11-09T19:06:03.287Z","updated":"2026-11-09T19:06:03.287Z"},
+    {"climber":"Nikki","problem":374947,"name":"APPROACH SHOES","grade":"6A+","angle":20,"tries":1,"sent":"2026-11-09T19:02:37.156Z","updated":"2026-11-09T19:02:37.156Z"}
   ]
 }
