@@ -71,8 +71,36 @@ function attemptLabel(a) {
   return plural(a.tries, "try", "tries");
 }
 
-// Ids of the last loaded list, so the problem view can step to prev / next.
-let listIds = [];
+// ---------- list state ----------
+
+// The last loaded list, shared with the problem view: prev / next step through it (loading its
+// next page at the end), and going back to the list shows it as it was, at the same scroll
+// position. The query and ids are saved too: phones often reload a web app left in the background.
+const listState = { key: "", total: 0, ids: [], items: [], scrollY: 0, ...load("list", {}) };
+
+// Adds a page of results (offset 0 starts a new list).
+function addListPage(key, offset, page) {
+  if (offset === 0 || key !== listState.key) Object.assign(listState, { key, ids: [], items: [] });
+  // After a reload only the ids are known; the items come back when the list is loaded again.
+  const complete = listState.items.length === listState.ids.length;
+  listState.items = complete ? [...listState.items, ...page.items] : [];
+  listState.ids = [...listState.ids, ...page.items.map((p) => p.id)];
+  listState.total = page.total;
+  save("list", { key: listState.key, total: listState.total, ids: listState.ids });
+}
+
+function fetchListPage(key, offset) {
+  return api(`/api/problems?${key}&offset=${offset}&limit=50`);
+}
+
+function listKey(angle, filters) {
+  const params = new URLSearchParams({ angle, status: filters.status, sort: filters.sort });
+  if (filters.q) params.set("q", filters.q);
+  if (filters.gmin !== "") params.set("gmin", filters.gmin);
+  if (filters.gmax !== "") params.set("gmax", filters.gmax);
+  if (filters.bench) params.set("bench", "1");
+  return params.toString();
+}
 
 // ---------- user picker ----------
 
@@ -144,35 +172,35 @@ const DEFAULT_FILTERS = { q: "", gmin: "", gmax: "", status: "any", sort: "repea
 
 function ProblemList({ angle }) {
   const [filters, setFilters] = usePersisted("filters", DEFAULT_FILTERS);
-  const [data, setData] = useState({ total: 0, items: [] });
+  const key = listKey(angle, filters);
+  // Coming back from a problem: the same list is still loaded.
+  const restore = useRef(listState.key === key && listState.items.length > 0 && listState.items.length === listState.ids.length);
+  const [data, setData] = useState(() => (restore.current ? { total: listState.total, items: listState.items } : { total: 0, items: [] }));
   const [loading, setLoading] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const reqId = useRef(0);
 
   const fetchPage = useCallback(async (offset) => {
     const id = ++reqId.current;
-    const params = new URLSearchParams({ angle, offset, limit: 50, status: filters.status, sort: filters.sort });
-    if (filters.q) params.set("q", filters.q);
-    if (filters.gmin !== "") params.set("gmin", filters.gmin);
-    if (filters.gmax !== "") params.set("gmax", filters.gmax);
-    if (filters.bench) params.set("bench", "1");
     setLoading(true);
     try {
-      const page = await api(`/api/problems?${params}`);
+      const page = await fetchListPage(key, offset);
       if (id !== reqId.current) return;
-      setData((prev) => {
-        const items = offset === 0 ? page.items : [...prev.items, ...page.items];
-        listIds = items.map((p) => p.id);
-        return { total: page.total, items };
-      });
+      addListPage(key, offset, page);
+      setData({ total: listState.total, items: listState.items });
     } catch (e) {
       toast(e.message);
     } finally {
       if (id === reqId.current) setLoading(false);
     }
-  }, [angle, filters]);
+  }, [key]);
 
   useEffect(() => {
+    if (restore.current) {
+      restore.current = false;
+      window.scrollTo(0, listState.scrollY);
+      return;
+    }
     const t = setTimeout(() => fetchPage(0), filters.q ? 250 : 0);
     return () => clearTimeout(t);
   }, [fetchPage]);
@@ -229,7 +257,7 @@ function ProblemList({ angle }) {
       <ul class="list">
         ${data.items.map((p) => html`
           <li>
-            <a href=${`#/p/${p.id}`}>
+            <a href=${`#/p/${p.id}`} onClick=${() => { listState.scrollY = window.scrollY; }}>
               <span class="grade">${p.grade}</span>
               <span class="info">
                 <span class="name">${p.is_benchmark ? html`<span class="bench" title="Benchmark">B</span>` : ""}${p.name}</span>
@@ -252,23 +280,72 @@ function ProblemList({ angle }) {
 
 // ---------- problem view ----------
 
-// A send locks the try count; removing it asks first, so a stray tap can't lose it.
-function AngleRow({ angle, current, attempt, others, onChange }) {
+// Recently seen problems, so prev / next show the next one at once (neighbours are prefetched).
+const problemCache = new Map();
+function rememberProblem(p) {
+  problemCache.delete(p.id);
+  problemCache.set(p.id, { problem: p, at: Date.now() });
+  if (problemCache.size > 30) problemCache.delete(problemCache.keys().next().value);
+}
+function fetchProblem(id) {
+  return api(`/api/problems/${id}`).then((p) => {
+    rememberProblem(p);
+    return p;
+  });
+}
+
+// Horizontal swipe: left = next, right = previous. Touches starting at the screen edge are left
+// to the browser's own back / forward gesture. (Lowercase handler names: Preact then always
+// listens for "touchstart", even where the browser doesn't advertise touch support.)
+function useSwipe(onNext, onPrev) {
+  const start = useRef(null);
+  return {
+    ontouchstart(e) {
+      const t = e.touches[0];
+      start.current = e.touches.length === 1 && t.clientX > 24 && t.clientX < innerWidth - 24 ? { x: t.clientX, y: t.clientY } : null;
+    },
+    ontouchend(e) {
+      const s = start.current;
+      start.current = null;
+      if (!s) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) (dx < 0 ? onNext : onPrev)();
+    },
+  };
+}
+
+// The angle the board is at: tries and sends are logged here only (switch the angle above to
+// log another one). Once sent, the try count is locked, and unsending takes a second tap within
+// 3 seconds, so a stray tap can't lose a send.
+function CurrentAngle({ angle, attempt, others, onChange }) {
   const tries = attempt?.tries ?? 0;
   const sent = attempt?.sent_at != null;
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  function tapSend() {
+    if (!sent) return onChange({ tries: Math.max(tries, 1), sent: true });
+    if (!armed) return setArmed(true);
+    setArmed(false);
+    onChange({ tries, sent: false });
+  }
+
   return html`
-    <div class=${`angle-row ${angle === current ? "cur" : ""} ${sent ? "is-sent" : ""}`}>
+    <div class=${`angle-row cur ${sent ? "is-sent" : ""}`}>
       <div class="angle-label">${angle}°</div>
       <div class="stepper">
         <button aria-label="Remove a try" disabled=${tries === 0 || sent} onClick=${() => onChange({ tries: tries - 1, sent })}>−</button>
         <span class="tries"><b>${tries}</b><small>${tries === 1 ? "try" : "tries"}</small></span>
         <button aria-label="Add a try" disabled=${sent} onClick=${() => onChange({ tries: tries + 1, sent })}>+</button>
       </div>
-      <button class=${`send ${sent ? "on" : ""}`} onClick=${() => {
-        if (sent && !confirm(`Remove your ${tries === 1 ? "flash" : "send"} at ${angle}°?`)) return;
-        onChange({ tries: sent ? tries : Math.max(tries, 1), sent: !sent });
-      }}>
-        ${sent ? (tries === 1 ? "⚡ Flash" : "✓ Sent") : "Sent?"}
+      <button class=${`send ${sent ? "on" : ""} ${armed ? "armed" : ""}`} onClick=${tapSend}>
+        ${armed ? "Unsend?" : sent ? (tries === 1 ? "⚡ Flash" : "✓ Sent") : "Sent?"}
       </button>
       ${others.length > 0 && html`
         <div class="others">${others.map((o) => html`<span>${o.user_name}: ${attemptLabel({ tries: o.tries, sent: o.sent_at != null })}</span>`)}</div>
@@ -277,13 +354,70 @@ function AngleRow({ angle, current, attempt, others, onChange }) {
   `;
 }
 
+// Read-only summary of the other angles that have something on them.
+function OtherAngles({ problem, angle, user }) {
+  const label = (x) => attemptLabel({ tries: x.tries, sent: x.sent_at != null });
+  const rows = ANGLES.filter((a) => a !== angle)
+    .map((a) => {
+      const here = problem.attempts.filter((x) => x.angle === a);
+      const mine = here.find((x) => x.user_id === user.id);
+      const people = [
+        ...(mine ? [{ who: "You", x: mine, sent: mine.sent_at != null }] : []),
+        ...here.filter((x) => x.user_id !== user.id).map((x) => ({ who: x.user_name, x, sent: x.sent_at != null })),
+      ];
+      return { a, people };
+    })
+    .filter((r) => r.people.length);
+  if (!rows.length) return null;
+  return html`
+    <h3>Other angles</h3>
+    <ul class="other-angles">
+      ${rows.map(({ a, people }) => html`
+        <li>
+          <b>${a}°</b>
+          <span>${people.map((p, i) => html`${i ? ", " : ""}<span class=${p.sent ? "sent-text" : ""}>${p.who}: ${label(p.x)}</span>`)}</span>
+        </li>
+      `)}
+    </ul>
+  `;
+}
+
 function ProblemView({ id, angle, user }) {
-  const [problem, setProblem] = useState(null);
+  const [problem, setProblem] = useState(() => problemCache.get(id)?.problem ?? null);
 
   useEffect(() => {
-    setProblem(null);
-    api(`/api/problems/${id}`).then(setProblem, (e) => toast(e.message));
+    const cached = problemCache.get(id);
+    setProblem(cached?.problem ?? null);
+    if (cached && Date.now() - cached.at < 60_000) return; // fresh enough (just prefetched)
+    let live = true;
+    fetchProblem(id).then((p) => live && setProblem(p), (e) => toast(e.message));
+    return () => { live = false; };
   }, [id]);
+
+  const idx = problem ? listState.ids.indexOf(problem.id) : -1;
+  const prev = idx > 0 ? listState.ids[idx - 1] : null;
+  const next = idx >= 0 && idx < listState.ids.length - 1 ? listState.ids[idx + 1] : null;
+  const hasMore = idx >= 0 && idx === listState.ids.length - 1 && listState.ids.length < listState.total;
+
+  // Prefetch the neighbours, so stepping is instant.
+  useEffect(() => {
+    for (const n of [next, prev]) if (n != null && !problemCache.has(n)) fetchProblem(n).catch(() => {});
+  }, [problem?.id]);
+
+  // replace(), not a new history entry: "back" returns to the list, not through every problem seen.
+  async function go(step) {
+    let target = step < 0 ? prev : next;
+    if (target == null && step > 0 && hasMore) {
+      try {
+        addListPage(listState.key, listState.ids.length, await fetchListPage(listState.key, listState.ids.length));
+        target = listState.ids[idx + 1];
+      } catch (e) {
+        return toast(e.message);
+      }
+    }
+    if (target != null) location.replace(`#/p/${target}`);
+  }
+  const swipe = useSwipe(() => go(1), () => go(-1));
 
   async function update(a, change) {
     const previous = problem;
@@ -292,9 +426,19 @@ function ProblemView({ id, angle, user }) {
       const old = problem.attempts.find((x) => x.user_id === user.id && x.angle === a);
       optimistic.push({ user_id: user.id, user_name: user.name, angle: a, tries: change.tries, sent_at: change.sent ? old?.sent_at ?? Date.now() : null });
     }
-    setProblem({ ...problem, attempts: optimistic });
+    const updated = { ...problem, attempts: optimistic };
+    setProblem(updated);
     try {
       await api("/api/attempts", { method: "PUT", body: JSON.stringify({ problemId: problem.id, angle: a, ...change }) });
+      rememberProblem(updated);
+      // Keep the list's dots right when going back to it.
+      const item = listState.items.find((p) => p.id === problem.id);
+      if (item) {
+        const mine = { ...item.mine };
+        if (change.tries > 0 || change.sent) mine[a] = { tries: change.tries, sent: change.sent ? 1 : 0 };
+        else delete mine[a];
+        item.mine = mine;
+      }
     } catch (e) {
       setProblem(previous);
       toast(`Not saved: ${e.message}`);
@@ -303,35 +447,34 @@ function ProblemView({ id, angle, user }) {
 
   if (!problem) return html`<p class="muted center">Loading…</p>`;
 
-  const idx = listIds.indexOf(problem.id);
-  const prev = idx > 0 ? listIds[idx - 1] : null;
-  const next = idx >= 0 && idx < listIds.length - 1 ? listIds[idx + 1] : null;
-
+  const mine = problem.attempts.find((x) => x.user_id === user.id && x.angle === angle);
   return html`
-    <section class="problem">
+    <section class=${`problem ${idx >= 0 ? "has-stepbar" : ""}`} ...${swipe}>
       <div class="problem-head">
-        <a class="btn subtle" href=${prev ? `#/p/${prev}` : undefined} aria-disabled=${!prev}>‹</a>
-        <div class="title">
-          <h2>${problem.name}</h2>
-          <p class="muted">
-            <b class="grade-inline">${problem.grade}</b>${problem.user_grade && problem.user_grade !== problem.grade ? ` (user ${problem.user_grade})` : ""}${` · ${problem.setter ?? "?"} · ${problem.repeats} repeats`}${problem.is_benchmark ? " · benchmark" : ""}
-          </p>
-          ${problem.method && html`<p class="muted small">${problem.method}</p>`}
-        </div>
-        <a class="btn subtle" href=${next ? `#/p/${next}` : undefined} aria-disabled=${!next}>›</a>
+        <h2>${problem.name}</h2>
+        <p class="muted">
+          <b class="grade-inline">${problem.grade}</b>${problem.user_grade && problem.user_grade !== problem.grade ? ` (user ${problem.user_grade})` : ""}${` · ${problem.setter ?? "?"} · ${problem.repeats} repeats`}${problem.is_benchmark ? " · benchmark" : ""}
+        </p>
+        ${problem.method && html`<p class="muted small">${problem.method}</p>`}
       </div>
       <${Board} holds=${problem.holds} />
-      <h3>Your attempts</h3>
-      ${ANGLES.map((a) => html`
-        <${AngleRow}
-          angle=${a}
-          current=${angle}
-          attempt=${problem.attempts.find((x) => x.user_id === user.id && x.angle === a)}
-          others=${problem.attempts.filter((x) => x.user_id !== user.id && x.angle === a)}
-          onChange=${(c) => update(a, c)}
-        />
-      `)}
-      <p class="muted small">Official grade is for 40°.</p>
+      <h3>At ${angle}°</h3>
+      <${CurrentAngle}
+        key=${`${problem.id}-${angle}`}
+        angle=${angle}
+        attempt=${mine}
+        others=${problem.attempts.filter((x) => x.user_id !== user.id && x.angle === angle)}
+        onChange=${(c) => update(angle, c)}
+      />
+      <${OtherAngles} problem=${problem} angle=${angle} user=${user} />
+      <p class="muted small">Official grade is for 40°. To log at another angle, switch it above.</p>
+      ${idx >= 0 && html`
+        <nav class="stepbar" aria-label="Problems">
+          <button class="btn" disabled=${prev == null} onClick=${() => go(-1)}>‹ Prev</button>
+          <span class="muted small">${idx + 1} / ${listState.total.toLocaleString()}</span>
+          <button class="btn" disabled=${next == null && !hasMore} onClick=${() => go(1)}>Next ›</button>
+        </nav>
+      `}
     </section>
   `;
 }
@@ -482,7 +625,10 @@ function App() {
     api("/api/me").then(setUser, () => setUser(null));
   }, []);
 
-  useEffect(() => window.scrollTo(0, 0), [route.startsWith("/p/") ? route : ""]);
+  // A problem opens at the top; the list restores its own position (see ProblemList).
+  useEffect(() => {
+    if (route.startsWith("/p/")) window.scrollTo(0, 0);
+  }, [route]);
 
   if (user === undefined) return null;
   if (user === null) return html`<${UserPicker} onPick=${setUser} />`;
@@ -516,4 +662,5 @@ function App() {
   `;
 }
 
+history.scrollRestoration = "manual"; // scroll positions are handled above
 render(html`<${App} />`, document.getElementById("app"));

@@ -220,11 +220,12 @@ input, select, textarea {
 
 /* ---------- problem ---------- */
 
-.problem-head { display: flex; align-items: flex-start; gap: 8px; }
-.problem-head .btn { font-size: 22px; padding: 4px 14px; }
-.problem-head .title { flex: 1; min-width: 0; text-align: center; }
+.problem-head { text-align: center; }
+.problem-head h2 { overflow-wrap: anywhere; }
 .problem-head p { margin: 0; }
 .grade-inline { color: var(--text); }
+/* Room for the fixed prev / next bar. */
+.problem.has-stepbar { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
 
 .board { display: block; width: 100%; max-width: 420px; margin: 12px auto 0; }
 .board-bg { fill: var(--board); }
@@ -277,7 +278,40 @@ input, select, textarea {
   font-weight: 700;
 }
 .send.on { background: var(--sent); border-color: var(--sent); color: #fff; }
+.send.armed { background: transparent; border-color: var(--end); color: var(--end); }
 .others { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--muted); }
+
+.other-angles { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 4px; }
+.other-angles li {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 14px;
+  color: var(--muted);
+}
+.other-angles b { color: var(--text); }
+.sent-text { color: var(--sent); font-weight: 600; }
+
+/* Prev / next: fixed at the bottom, in thumb reach. */
+.stepbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 8px max(16px, calc((100vw - 608px) / 2)) calc(8px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+.stepbar .btn { padding: 12px; font-size: 17px; }
+.stepbar span { text-align: center; font-variant-numeric: tabular-nums; }
 
 /* ---------- progress ---------- */
 
