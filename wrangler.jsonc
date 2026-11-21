@@ -1,0 +1,25 @@
+// Cloudflare Worker config. See README "Deploy to Cloudflare".
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "moonboard-angles",
+  "main": "server/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "workers_dev": true,
+  // Version preview URLs would be another way in; the Worker checks Access tokens anyway.
+  "preview_urls": false,
+  "build": { "command": "node scripts/build-assets.ts" },
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    // Static files go through the Worker too, so the Access check covers them.
+    "run_worker_first": true
+  },
+  // The first `wrangler deploy` creates the database and the bucket.
+  "d1_databases": [{ "binding": "DB", "database_name": "moonboard" }],
+  "r2_buckets": [{ "binding": "HOLDS", "bucket_name": "moonboard-holds" }],
+  "vars": {
+    // From Zero Trust: team domain, and the Access application's AUD tag. Empty = every request gets a 503.
+    "ACCESS_TEAM_DOMAIN": "odd-snow-c471.cloudflareaccess.com",
+    "ACCESS_AUD": "2f2a40022a291429732e6b5ceee8d42bfd3ed0a59ed95ddf32ffbeaf64b149d3"
+  }
+}

@@ -1,12 +1,12 @@
 // CLI: `npm run moon:sync` downloads the Mini 2020 catalog using the captured Moon app session.
 // `npm run moon:sync -- --offline` re-imports the last download instead.
-import { openDb } from "./db.ts";
+import { openDb } from "./sqlite-node.ts";
 import { DATA_DIR, DB_PATH, PROGRESS_PATH } from "./paths.ts";
 import { restoreProgress, writeProgress } from "./progress.ts";
 import { reimportRaw, syncMini2020 } from "./moon.ts";
 import { join } from "node:path";
 
-const db = openDb(DB_PATH);
+const db = await openDb(DB_PATH);
 try {
   const rawPath = join(DATA_DIR, "moon-mini2020.json");
   const r = process.argv.includes("--offline")

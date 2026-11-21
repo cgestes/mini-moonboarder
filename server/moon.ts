@@ -99,11 +99,11 @@ export async function reimportRaw(db: Db, rawPath: string): Promise<SyncResult> 
   return importRaw(db, JSON.parse(await readFile(rawPath, "utf8")));
 }
 
-function importRaw(db: Db, raw: any[]): SyncResult {
+export async function importRaw(db: Db, raw: any[]): Promise<SyncResult> {
   const { rows, deleted, skipped } = normalizeAppProblems(raw);
   if (rows.length === 0) throw new Error(`Downloaded ${raw.length} problems but none could be read (skipped ${skipped})`);
-  const counts = db.importProblems(rows);
+  const counts = await db.importProblems(rows);
   const result = { at: Date.now(), downloaded: raw.length, ...counts, deleted, skipped };
-  db.setMeta("last_sync", JSON.stringify(result));
+  await db.setMeta("last_sync", JSON.stringify(result));
   return result;
 }

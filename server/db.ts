@@ -1,7 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import type { ProblemRow } from "./importer.ts";
+import type { Sql } from "./sql.ts";
 
 export const ANGLES = [20, 25, 30, 35, 40] as const;
 
@@ -47,6 +45,9 @@ create table if not exists meta (
 );
 `;
 
+// One statement each: D1 can't run a multi-statement string as a prepared statement.
+export const SCHEMA_STATEMENTS = SCHEMA.split(";").map((s) => s.trim()).filter(Boolean);
+
 export type ListQuery = {
   userId: number;
   angle: number;
@@ -63,54 +64,51 @@ export type ListQuery = {
 };
 
 export type AttemptUpdate = { tries: number; sent: boolean };
+export type User = { id: number; name: string };
 
-export function openDb(path: string) {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec("pragma journal_mode = wal; pragma foreign_keys = on;");
-  db.exec(SCHEMA);
+const UPSERT_PROBLEM = `
+  insert into problems (id, name, grade, grade_idx, user_grade, setter, method, is_benchmark,
+                        repeats, rating, holds, created_at, imported_at)
+  values (:id, :name, :grade, :grade_idx, :user_grade, :setter, :method, :is_benchmark,
+          :repeats, :rating, :holds, :created_at, :imported_at)
+  on conflict(id) do update set
+    name = excluded.name, grade = excluded.grade, grade_idx = excluded.grade_idx,
+    user_grade = excluded.user_grade, setter = excluded.setter, method = excluded.method,
+    is_benchmark = excluded.is_benchmark, repeats = excluded.repeats, rating = excluded.rating,
+    holds = excluded.holds, created_at = excluded.created_at, imported_at = excluded.imported_at
+`;
 
-  const upsertProblem = db.prepare(`
-    insert into problems (id, name, grade, grade_idx, user_grade, setter, method, is_benchmark,
-                          repeats, rating, holds, created_at, imported_at)
-    values (:id, :name, :grade, :grade_idx, :user_grade, :setter, :method, :is_benchmark,
-            :repeats, :rating, :holds, :created_at, :imported_at)
-    on conflict(id) do update set
-      name = excluded.name, grade = excluded.grade, grade_idx = excluded.grade_idx,
-      user_grade = excluded.user_grade, setter = excluded.setter, method = excluded.method,
-      is_benchmark = excluded.is_benchmark, repeats = excluded.repeats, rating = excluded.rating,
-      holds = excluded.holds, created_at = excluded.created_at, imported_at = excluded.imported_at
-  `);
+export function createDb(sql: Sql) {
+  async function count(table: "problems" | "attempts"): Promise<number> {
+    return (await sql.get<{ n: number }>(`select count(*) n from ${table}`))!.n;
+  }
 
-  function importProblems(rows: ProblemRow[]): { inserted: number; updated: number } {
-    const before = (db.prepare("select count(*) n from problems").get() as { n: number }).n;
+  async function migrate() {
+    await sql.batch(SCHEMA_STATEMENTS.map((s) => ({ sql: s })));
+  }
+
+  async function importProblems(rows: ProblemRow[]): Promise<{ inserted: number; updated: number }> {
+    const before = await count("problems");
     const now = Date.now();
-    db.exec("begin");
-    try {
-      for (const r of rows) upsertProblem.run({ ...r, holds: JSON.stringify(r.holds), imported_at: now });
-      db.exec("commit");
-    } catch (e) {
-      db.exec("rollback");
-      throw e;
-    }
-    const after = (db.prepare("select count(*) n from problems").get() as { n: number }).n;
-    return { inserted: after - before, updated: rows.length - (after - before) };
+    await sql.batch(rows.map((r) => ({ sql: UPSERT_PROBLEM, params: { ...r, holds: JSON.stringify(r.holds), imported_at: now } })));
+    const inserted = (await count("problems")) - before;
+    return { inserted, updated: rows.length - inserted };
   }
 
   function listUsers() {
-    return db.prepare("select id, name from users order by name").all() as { id: number; name: string }[];
+    return sql.all<User>("select id, name from users order by name");
   }
 
-  function createUser(name: string) {
-    db.prepare("insert into users (name, created_at) values (?, ?) on conflict(name) do nothing").run(name, Date.now());
-    return db.prepare("select id, name from users where name = ?").get(name) as { id: number; name: string };
+  async function createUser(name: string): Promise<User> {
+    await sql.run("insert into users (name, created_at) values (:name, :now) on conflict(name) do nothing", { name, now: Date.now() });
+    return (await sql.get<User>("select id, name from users where name = :name", { name }))!;
   }
 
   function getUser(id: number) {
-    return db.prepare("select id, name from users where id = ?").get(id) as { id: number; name: string } | undefined;
+    return sql.get<User>("select id, name from users where id = :id", { id });
   }
 
-  function listProblems(query: ListQuery) {
+  async function listProblems(query: ListQuery) {
     const where: string[] = [];
     const params: Record<string, string | number> = { user: query.userId, angle: query.angle };
     if (query.q) {
@@ -149,10 +147,9 @@ export function openDb(path: string) {
     }[query.sort ?? "repeats"];
 
     const whereSql = where.length ? `where ${where.join(" and ")}` : "";
-    const countStmt = db.prepare(`select count(*) n from problems p ${whereSql}`);
-    countStmt.setAllowUnknownNamedParameters(true); // :user / :angle only appear with status filters
-    const total = (countStmt.get(params) as { n: number }).n;
-    const itemsStmt = db.prepare(`
+    // compile() only binds the parameters a query uses, so :user / :angle can sit unused here.
+    const total = (await sql.get<{ n: number }>(`select count(*) n from problems p ${whereSql}`, params))!.n;
+    const items = await sql.all(`
       select p.id, p.name, p.grade, p.setter, p.is_benchmark, p.repeats,
              (select json_group_object(a.angle, json_object('tries', a.tries, 'sent', a.sent_at is not null))
                 from attempts a where a.user_id = :user and a.problem_id = p.id) as mine,
@@ -160,9 +157,7 @@ export function openDb(path: string) {
       from problems p ${whereSql}
       order by ${order}
       limit :limit offset :offset
-    `);
-    itemsStmt.setAllowUnknownNamedParameters(true);
-    const items = itemsStmt.all({ ...params, limit: Math.min(query.limit ?? 50, 200), offset: query.offset ?? 0 }) as any[];
+    `, { ...params, limit: Math.min(query.limit ?? 50, 200), offset: query.offset ?? 0 });
 
     return {
       total,
@@ -174,25 +169,26 @@ export function openDb(path: string) {
     };
   }
 
-  function getProblem(id: number) {
-    const p = db.prepare("select * from problems where id = ?").get(id) as any;
+  async function getProblem(id: number) {
+    const p = await sql.get("select * from problems where id = :id", { id });
     if (!p) return undefined;
-    const attempts = db.prepare(`
+    const attempts = await sql.all(`
       select a.user_id, u.name as user_name, a.angle, a.tries, a.sent_at, a.updated_at
       from attempts a join users u on u.id = a.user_id
-      where a.problem_id = ? order by a.angle desc, u.name
-    `).all(id);
+      where a.problem_id = :id order by a.angle desc, u.name
+    `, { id });
     return { ...p, is_benchmark: !!p.is_benchmark, holds: JSON.parse(p.holds), attempts };
   }
 
-  function setAttempt(userId: number, problemId: number, angle: number, update: AttemptUpdate) {
+  async function setAttempt(userId: number, problemId: number, angle: number, update: AttemptUpdate) {
+    const key = { user: userId, problem: problemId, angle };
     const tries = update.sent ? Math.max(update.tries, 1) : update.tries;
     if (tries <= 0 && !update.sent) {
-      db.prepare("delete from attempts where user_id = ? and problem_id = ? and angle = ?").run(userId, problemId, angle);
+      await sql.run("delete from attempts where user_id = :user and problem_id = :problem and angle = :angle", key);
       return null;
     }
     const now = Date.now();
-    db.prepare(`
+    await sql.run(`
       insert into attempts (user_id, problem_id, angle, tries, sent_at, updated_at)
       values (:user, :problem, :angle, :tries, :sent_at, :now)
       on conflict(user_id, problem_id, angle) do update set
@@ -200,76 +196,69 @@ export function openDb(path: string) {
         -- keep the original send date when the send is re-confirmed
         sent_at = case when :sent then coalesce(attempts.sent_at, excluded.sent_at) else null end,
         updated_at = excluded.updated_at
-    `).run({ user: userId, problem: problemId, angle, tries, sent_at: update.sent ? now : null, sent: update.sent ? 1 : 0, now });
-    return db.prepare("select angle, tries, sent_at from attempts where user_id = ? and problem_id = ? and angle = ?")
-      .get(userId, problemId, angle);
+    `, { ...key, tries, sent_at: update.sent ? now : null, sent: update.sent, now });
+    return sql.get("select angle, tries, sent_at from attempts where user_id = :user and problem_id = :problem and angle = :angle", key);
   }
 
   // Sends per grade and angle for every user, plus problem totals per grade.
-  function stats() {
-    const totals = db.prepare("select grade, grade_idx, count(*) n from problems group by grade_idx order by grade_idx").all();
-    const sends = db.prepare(`
-      select a.user_id, a.angle, p.grade, count(*) n, sum(a.tries = 1) flashes
-      from attempts a join problems p on p.id = a.problem_id
-      where a.sent_at is not null
-      group by a.user_id, a.angle, p.grade_idx
-    `).all();
-    const trying = db.prepare(`
-      select user_id, angle, count(*) n from attempts where sent_at is null and tries > 0 group by user_id, angle
-    `).all();
-    return { totals, sends, trying, users: listUsers() };
+  async function stats() {
+    const [totals, sends, trying, users] = await Promise.all([
+      sql.all("select grade, grade_idx, count(*) n from problems group by grade_idx order by grade_idx"),
+      sql.all(`
+        select a.user_id, a.angle, p.grade, count(*) n, sum(a.tries = 1) flashes
+        from attempts a join problems p on p.id = a.problem_id
+        where a.sent_at is not null
+        group by a.user_id, a.angle, p.grade_idx
+      `),
+      sql.all("select user_id, angle, count(*) n from attempts where sent_at is null and tries > 0 group by user_id, angle"),
+      listUsers(),
+    ]);
+    return { totals, sends, trying, users };
   }
 
-  function getMeta(key: string): string | null {
-    return (db.prepare("select value from meta where key = ?").get(key) as { value: string } | undefined)?.value ?? null;
+  async function getMeta(key: string): Promise<string | null> {
+    return (await sql.get<{ value: string }>("select value from meta where key = :key", { key }))?.value ?? null;
   }
 
-  function setMeta(key: string, value: string) {
-    db.prepare("insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value").run(key, value);
+  async function setMeta(key: string, value: string) {
+    await sql.run("insert into meta (key, value) values (:key, :value) on conflict(key) do update set value = excluded.value", { key, value });
   }
 
-  function problemCount(): number {
-    return (db.prepare("select count(*) n from problems").get() as { n: number }).n;
+  function problemCount(): Promise<number> {
+    return count("problems");
   }
 
   // Everything needed to rebuild the climbers' history, plus problem name/grade for readable diffs.
   function exportAttempts() {
-    return db.prepare(`
+    return sql.all(`
       select u.name as climber, a.problem_id as problem, p.name, p.grade, a.angle, a.tries, a.sent_at, a.updated_at
       from attempts a join users u on u.id = a.user_id join problems p on p.id = a.problem_id
       order by u.name collate nocase, a.problem_id, a.angle
-    `).all() as any[];
-  }
-
-  // Adds climbers and attempts that don't exist locally yet; never overwrites local data.
-  // Attempts on problems that aren't synced yet are skipped (and picked up after the next sync).
-  function restoreAttempts(climbers: string[], attempts: any[]) {
-    for (const name of climbers) createUser(name);
-    const insert = db.prepare(`
-      insert into attempts (user_id, problem_id, angle, tries, sent_at, updated_at)
-      select u.id, p.id, :angle, :tries, :sent_at, :updated_at
-      from users u join problems p on p.id = :problem
-      where u.name = :climber
-      on conflict do nothing
     `);
-    let added = 0;
-    db.exec("begin");
-    try {
-      for (const a of attempts) {
-        added += Number(insert.run({
-          climber: a.climber, problem: a.problem, angle: a.angle, tries: a.tries,
-          sent_at: a.sent_at ?? null, updated_at: a.updated_at ?? Date.now(),
-        }).changes);
-      }
-      db.exec("commit");
-    } catch (e) {
-      db.exec("rollback");
-      throw e;
-    }
-    return added;
   }
 
-  return { db, importProblems, getMeta, setMeta, problemCount, exportAttempts, restoreAttempts, listUsers, createUser, getUser, listProblems, getProblem, setAttempt, stats };
+  // Adds climbers and attempts that don't exist yet; never overwrites existing data.
+  // Attempts on problems that aren't synced yet are skipped (and picked up after the next sync).
+  async function restoreAttempts(climbers: string[], attempts: any[]): Promise<number> {
+    for (const name of climbers) await createUser(name);
+    const before = await count("attempts");
+    await sql.batch(attempts.map((a) => ({
+      sql: `
+        insert into attempts (user_id, problem_id, angle, tries, sent_at, updated_at)
+        select u.id, p.id, :angle, :tries, :sent_at, :updated_at
+        from users u join problems p on p.id = :problem
+        where u.name = :climber
+        on conflict do nothing
+      `,
+      params: {
+        climber: a.climber, problem: a.problem, angle: a.angle, tries: a.tries,
+        sent_at: a.sent_at ?? null, updated_at: a.updated_at ?? Date.now(),
+      },
+    })));
+    return (await count("attempts")) - before;
+  }
+
+  return { migrate, importProblems, getMeta, setMeta, problemCount, exportAttempts, restoreAttempts, listUsers, createUser, getUser, listProblems, getProblem, setAttempt, stats };
 }
 
-export type Db = ReturnType<typeof openDb>;
+export type Db = ReturnType<typeof createDb>;

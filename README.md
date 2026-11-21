@@ -68,11 +68,45 @@ The server rewrites it after each change, so commit it whenever you like. At sta
 each sync, missing climbers and attempts are restored from it (local data is never overwritten),
 so a fresh clone gets its history back once problems are synced.
 
+## Deploy to Cloudflare
+
+The same app also runs as a Cloudflare Worker, so it works anywhere, not just on home Wi-Fi:
+problems, climbers and attempts in **D1**, hold photos in a private **R2** bucket, and
+**Cloudflare Access** in front (sign-in with an email code; free for up to 50 people). The Worker
+also checks the Access token on every request, static files included, and answers 503 until
+`ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` are set, so it is never open by accident.
+
+One-time setup:
+
+1. `npx wrangler login`, and enable R2 in the Cloudflare dashboard (R2 Object Storage).
+2. `npx wrangler r2 bucket create moonboard-holds`, then `npm run cloud:deploy` (the first deploy
+   creates the D1 database).
+3. `npm run cloud:push`: problems from the last `npm run moon:sync` download, hold photos, and, into
+   an empty database, the climbers and attempts from `progress/ascents.json`.
+4. Access: Workers & Pages > moonboard-angles > Settings > Domains & Routes > workers.dev >
+   Enable Cloudflare Access. In Zero Trust > Access > Applications, edit its policy to allow
+   each climber's email. Copy the application's AUD tag and your team domain
+   (`<team>.cloudflareaccess.com`, Zero Trust > Settings) into `vars` in `wrangler.jsonc`, then
+   `npm run cloud:deploy` again.
+
+Day to day:
+
+- New problems: `npm run moon:sync` as above, then `npm run cloud:push`.
+- Tries and sends into git: `npm run cloud:pull` rewrites `progress/ascents.json` from the
+  deployed app; commit it. Once the app is online, it is the source of truth: `cloud:push` doesn't
+  touch climbers or attempts that are already there.
+- `npm run cloud:dev` runs the Worker locally (Access check off on localhost);
+  `npm run cloud:push -- --local` fills its local database.
+
 ## How it works
 
-- `server/main.ts`: HTTP server and JSON API, no framework.
-- `server/db.ts`: SQLite schema and queries. `attempts` holds one row per climber / problem / angle
+- `server/app.ts`: the JSON API as a fetch handler, shared by the local server and the Worker.
+- `server/main.ts`: local HTTP server (node:http, no framework), static files, Moon sync, progress file.
+- `server/worker.ts`: Cloudflare Worker entry; `server/access.ts` checks Access tokens.
+- `server/db.ts`: SQLite schema and queries, on node:sqlite locally (`server/sqlite-node.ts`) and D1
+  in the Worker (`server/d1.ts`). `attempts` holds one row per climber / problem / angle
   with a try count and an optional send date. A send with one try counts as a flash.
+- `scripts/cloud.ts`: `cloud:push` / `cloud:pull`, through `wrangler d1 execute`.
 - `server/moon.ts`: downloads the catalog from the Moon backend. `tools/moon_capture.py` is the mitmproxy add-on.
 - `server/progress.ts`: keeps `progress/ascents.json` in sync with the database.
 - `server/importer.ts`: turns the app's problem JSON into rows (Mini 2020 grid is A–K × 1–12, foot holds included).

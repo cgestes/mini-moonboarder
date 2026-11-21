@@ -9,7 +9,7 @@ const iso = (ms: number | null) => (ms == null ? null : new Date(ms).toISOString
 const ms = (value: string | null) => (value == null ? null : Date.parse(value));
 
 export async function writeProgress(db: Db, path: string) {
-  const attempts = db.exportAttempts().map((a) => ({
+  const attempts = (await db.exportAttempts()).map((a) => ({
     climber: a.climber,
     problem: a.problem,
     name: a.name,
@@ -19,7 +19,7 @@ export async function writeProgress(db: Db, path: string) {
     sent: iso(a.sent_at),
     updated: iso(a.updated_at),
   }));
-  const body = { climbers: db.listUsers().map((u) => u.name), attempts };
+  const body = { climbers: (await db.listUsers()).map((u) => u.name), attempts };
   await mkdir(dirname(path), { recursive: true });
   // One attempt per line keeps git diffs small and readable.
   const lines = attempts.map((a) => `    ${JSON.stringify(a)}`).join(",\n");

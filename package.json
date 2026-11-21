@@ -13,10 +13,17 @@
     "test": "node --test test/",
     "moon:proxy": "mitmdump --mode wireguard -s tools/moon_capture.py --allow-hosts '(ems-x|moonclimbing)\\.com' --set block_global=false",
     "moon:sync": "node server/moon-sync.ts",
-    "moon:qr": "tools/moon-wg-qr.sh"
+    "moon:qr": "tools/moon-wg-qr.sh",
+    "cloud:dev": "wrangler dev --var DEV_NO_ACCESS:1",
+    "cloud:deploy": "wrangler deploy",
+    "cloud:push": "node scripts/cloud.ts push",
+    "cloud:pull": "node scripts/cloud.ts pull"
   },
   "dependencies": {
     "htm": "^3.1.1",
     "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "wrangler": "^4.166.0"
   }
 }

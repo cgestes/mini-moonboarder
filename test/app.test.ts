@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { openDb } from "../server/db.ts";
+import { openDb } from "../server/sqlite-node.ts";
 import { normalizeAppProblems, parseMoves } from "../server/importer.ts";
 import { downloadBoard, syncMini2020 } from "../server/moon.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -92,10 +92,10 @@ test("sync pages through the catalog by advancing watermarks", async (t) => {
 
   const dir = mkdtempSync(join(tmpdir(), "moon-"));
   writeFileSync(join(dir, "auth.json"), JSON.stringify(auth));
-  const db = openDb(":memory:");
+  const db = await openDb(":memory:");
   const result = await syncMini2020(db, join(dir, "auth.json"), join(dir, "raw.json"));
   assert.equal(result.inserted, 3);
-  assert.equal(JSON.parse(db.getMeta("last_sync")!).inserted, 3);
+  assert.equal(JSON.parse((await db.getMeta("last_sync"))!).inserted, 3);
 });
 
 test("sync reports an expired session", async (t) => {
@@ -104,67 +104,67 @@ test("sync reports an expired session", async (t) => {
   await assert.rejects(downloadBoard(auth, 19), /expired/);
 });
 
-test("re-import updates problems and keeps attempts", () => {
-  const db = openDb(":memory:");
-  assert.deepEqual(db.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2)]).rows), { inserted: 2, updated: 0 });
-  const me = db.createUser("Cedric");
-  db.setAttempt(me.id, 1, 30, { tries: 3, sent: false });
+test("re-import updates problems and keeps attempts", async () => {
+  const db = await openDb(":memory:");
+  assert.deepEqual(await db.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2)]).rows), { inserted: 2, updated: 0 });
+  const me = await db.createUser("Cedric");
+  await db.setAttempt(me.id, 1, 30, { tries: 3, sent: false });
 
-  const result = db.importProblems(normalizeAppProblems([rawProblem(1, {}, { repeats: 99 }), rawProblem(3)]).rows);
+  const result = await db.importProblems(normalizeAppProblems([rawProblem(1, {}, { repeats: 99 }), rawProblem(3)]).rows);
   assert.deepEqual(result, { inserted: 1, updated: 1 });
-  const p = db.getProblem(1);
+  const p = await db.getProblem(1);
   assert.equal(p.repeats, 99);
   assert.equal(p.attempts.length, 1);
 });
 
-test("attempts per angle: tries, sends, flash and clearing", () => {
-  const db = openDb(":memory:");
-  db.importProblems(normalizeAppProblems([rawProblem(1)]).rows);
-  const me = db.createUser("Cedric");
+test("attempts per angle: tries, sends, flash and clearing", async () => {
+  const db = await openDb(":memory:");
+  await db.importProblems(normalizeAppProblems([rawProblem(1)]).rows);
+  const me = await db.createUser("Cedric");
 
   // Marking sent with zero tries counts as one try (a flash).
-  assert.equal((db.setAttempt(me.id, 1, 25, { tries: 0, sent: true }) as any).tries, 1);
+  assert.equal((await db.setAttempt(me.id, 1, 25, { tries: 0, sent: true }) as any).tries, 1);
 
-  db.setAttempt(me.id, 1, 40, { tries: 2, sent: false });
-  const firstSend = db.setAttempt(me.id, 1, 40, { tries: 3, sent: true }) as any;
+  await db.setAttempt(me.id, 1, 40, { tries: 2, sent: false });
+  const firstSend = await db.setAttempt(me.id, 1, 40, { tries: 3, sent: true }) as any;
   // Adding a try after sending keeps the original send date.
-  const later = db.setAttempt(me.id, 1, 40, { tries: 4, sent: true }) as any;
+  const later = await db.setAttempt(me.id, 1, 40, { tries: 4, sent: true }) as any;
   assert.equal(later.sent_at, firstSend.sent_at);
 
-  assert.equal(db.setAttempt(me.id, 1, 25, { tries: 0, sent: false }), null);
+  assert.equal(await db.setAttempt(me.id, 1, 25, { tries: 0, sent: false }), null);
   assert.deepEqual(
-    db.getProblem(1).attempts.map((a: any) => [a.angle, a.tries, a.sent_at != null]),
+    (await db.getProblem(1)).attempts.map((a: any) => [a.angle, a.tries, a.sent_at != null]),
     [[40, 4, true]],
   );
 });
 
-test("list filters by status at the selected angle", () => {
-  const db = openDb(":memory:");
-  db.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2), rawProblem(3), rawProblem(4)]).rows);
-  const me = db.createUser("Cedric");
-  const wife = db.createUser("Partner");
-  db.setAttempt(me.id, 1, 40, { tries: 1, sent: true });
-  db.setAttempt(me.id, 2, 30, { tries: 5, sent: false });
-  db.setAttempt(me.id, 3, 30, { tries: 2, sent: true });
-  db.setAttempt(wife.id, 4, 30, { tries: 1, sent: true });
+test("list filters by status at the selected angle", async () => {
+  const db = await openDb(":memory:");
+  await db.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2), rawProblem(3), rawProblem(4)]).rows);
+  const me = await db.createUser("Cedric");
+  const wife = await db.createUser("Partner");
+  await db.setAttempt(me.id, 1, 40, { tries: 1, sent: true });
+  await db.setAttempt(me.id, 2, 30, { tries: 5, sent: false });
+  await db.setAttempt(me.id, 3, 30, { tries: 2, sent: true });
+  await db.setAttempt(wife.id, 4, 30, { tries: 1, sent: true });
 
-  const ids = (status: any, angle = 30) =>
-    db.listProblems({ userId: me.id, angle, status, sort: "name" }).items.map((p: any) => p.id);
-  assert.deepEqual(ids("sent"), [3]);
-  assert.deepEqual(ids("trying"), [2]);
-  assert.deepEqual(ids("todo"), [1, 2, 4]);
-  assert.deepEqual(ids("other"), [1]);
+  const ids = async (status: any, angle = 30) =>
+    (await db.listProblems({ userId: me.id, angle, status, sort: "name" })).items.map((p: any) => p.id);
+  assert.deepEqual(await ids("sent"), [3]);
+  assert.deepEqual(await ids("trying"), [2]);
+  assert.deepEqual(await ids("todo"), [1, 2, 4]);
+  assert.deepEqual(await ids("other"), [1]);
 
-  const item = db.listProblems({ userId: me.id, angle: 30, q: "Problem 3" }).items[0];
+  const item = (await db.listProblems({ userId: me.id, angle: 30, q: "Problem 3" })).items[0];
   assert.deepEqual(item.mine, { 30: { tries: 2, sent: 1 } });
 });
 
-test("user names are unique ignoring case", () => {
-  const db = openDb(":memory:");
-  const a = db.createUser("Cedric");
-  const b = db.createUser("cedric");
+test("user names are unique ignoring case", async () => {
+  const db = await openDb(":memory:");
+  const a = await db.createUser("Cedric");
+  const b = await db.createUser("cedric");
   assert.equal(a.id, b.id);
-  assert.equal(db.listUsers().length, 1);
+  assert.equal((await db.listUsers()).length, 1);
 });
 
 test("progress file round-trips climbers and attempts", async () => {
@@ -172,21 +172,21 @@ test("progress file round-trips climbers and attempts", async () => {
   const { readFileSync } = await import("node:fs");
   const path = join(mkdtempSync(join(tmpdir(), "progress-")), "ascents.json");
 
-  const source = openDb(":memory:");
-  source.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2)]).rows);
-  const me = source.createUser("Cedric");
-  const partner = source.createUser("Partner");
-  source.setAttempt(me.id, 1, 30, { tries: 3, sent: true });
-  source.setAttempt(partner.id, 2, 40, { tries: 2, sent: false });
+  const source = await openDb(":memory:");
+  await source.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2)]).rows);
+  const me = await source.createUser("Cedric");
+  const partner = await source.createUser("Partner");
+  await source.setAttempt(me.id, 1, 30, { tries: 3, sent: true });
+  await source.setAttempt(partner.id, 2, 40, { tries: 2, sent: false });
   await writeProgress(source, path);
   assert.match(readFileSync(path, "utf8"), /"climber":"Cedric","problem":1,"name":"Problem 1","grade":"6B\+","angle":30,"tries":3/);
 
   // A fresh database restores climbers right away, and attempts once their problems exist.
-  const target = openDb(":memory:");
+  const target = await openDb(":memory:");
   assert.equal(await restoreProgress(target, path), 0);
-  assert.deepEqual(target.listUsers().map((u) => u.name), ["Cedric", "Partner"]);
-  target.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2)]).rows);
+  assert.deepEqual((await target.listUsers()).map((u) => u.name), ["Cedric", "Partner"]);
+  await target.importProblems(normalizeAppProblems([rawProblem(1), rawProblem(2)]).rows);
   assert.equal(await restoreProgress(target, path), 2);
   assert.equal(await restoreProgress(target, path), 0); // idempotent
-  assert.deepEqual(target.exportAttempts(), source.exportAttempts());
+  assert.deepEqual(await target.exportAttempts(), await source.exportAttempts());
 });

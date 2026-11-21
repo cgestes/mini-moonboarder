@@ -408,11 +408,14 @@ function Sync() {
   const [busy, setBusy] = useState(false);
 
   const refresh = () => api("/api/sync").then(setStatus, (e) => toast(e.message));
+  // The deployed app can't sync itself (problems come from `npm run cloud:push`).
+  const canSync = status?.canSync !== false;
   useEffect(() => {
     refresh();
+    if (!canSync) return;
     const t = setInterval(refresh, 5000); // picks up a fresh capture from the phone
     return () => clearInterval(t);
-  }, []);
+  }, [canSync]);
 
   async function sync() {
     setBusy(true);
@@ -436,6 +439,15 @@ function Sync() {
       <h2>Sync problems</h2>
       <p>${status ? `${status.problems.toLocaleString()} Mini 2020 problems in the app.` : "…"}
         ${last ? ` Last sync ${ago(last.at)}.` : ""}</p>
+      ${!canSync && html`
+        <p class="muted">This copy of the app is online: problems are synced from the computer.</p>
+        <ol>
+          <li>Sync on the computer as usual (<code>npm run moon:sync</code>, see the README).</li>
+          <li>Then <code>npm run cloud:push</code> to send the problems here.</li>
+        </ol>
+        <p class="muted small">Re-syncing is safe: problems are updated in place and your attempts are kept.</p>
+      `}
+      ${canSync && html`
       <p class=${fresh ? "ok" : "muted"}>
         ${!status?.authCapturedAt ? "No Moon app session captured yet."
           : fresh ? `Moon app session captured ${ago(status.authCapturedAt)}, ready.`
@@ -454,6 +466,7 @@ function Sync() {
         <li>Come back here and tap <b>Sync now</b> within the hour, then turn the tunnel off.</li>
       </ol>
       <p class="muted small">Re-syncing is safe: problems are updated in place and your attempts are kept.</p>
+      `}
     </section>
   `;
 }
