@@ -252,6 +252,7 @@ function ProblemList({ angle }) {
 
 // ---------- problem view ----------
 
+// A send locks the try count; removing it asks first, so a stray tap can't lose it.
 function AngleRow({ angle, current, attempt, others, onChange }) {
   const tries = attempt?.tries ?? 0;
   const sent = attempt?.sent_at != null;
@@ -259,11 +260,14 @@ function AngleRow({ angle, current, attempt, others, onChange }) {
     <div class=${`angle-row ${angle === current ? "cur" : ""} ${sent ? "is-sent" : ""}`}>
       <div class="angle-label">${angle}°</div>
       <div class="stepper">
-        <button aria-label="Remove a try" disabled=${tries === 0 || (sent && tries <= 1)} onClick=${() => onChange({ tries: tries - 1, sent })}>−</button>
+        <button aria-label="Remove a try" disabled=${tries === 0 || sent} onClick=${() => onChange({ tries: tries - 1, sent })}>−</button>
         <span class="tries"><b>${tries}</b><small>${tries === 1 ? "try" : "tries"}</small></span>
-        <button aria-label="Add a try" onClick=${() => onChange({ tries: tries + 1, sent })}>+</button>
+        <button aria-label="Add a try" disabled=${sent} onClick=${() => onChange({ tries: tries + 1, sent })}>+</button>
       </div>
-      <button class=${`send ${sent ? "on" : ""}`} onClick=${() => onChange({ tries: sent ? tries : Math.max(tries, 1), sent: !sent })}>
+      <button class=${`send ${sent ? "on" : ""}`} onClick=${() => {
+        if (sent && !confirm(`Remove your ${tries === 1 ? "flash" : "send"} at ${angle}°?`)) return;
+        onChange({ tries: sent ? tries : Math.max(tries, 1), sent: !sent });
+      }}>
         ${sent ? (tries === 1 ? "⚡ Flash" : "✓ Sent") : "Sent?"}
       </button>
       ${others.length > 0 && html`
